@@ -1,60 +1,44 @@
-import json
-import torch
-from torch.utils.data import Dataset
-import torch.utils.data
-from models import *
-from utils import *
+def evaluate(sentence, model, libra, embedding_size):
+    # Tokenize the sentence
+    tokenized_sentence = [SOS_token] + [libra.word2index[word] for word in sentence.split()] + [EOS_token]
+    # Convert to tensor and add batch dimension
+    sentence_tensor = torch.tensor(tokenized_sentence, dtype=torch.long).unsqueeze(0)
 
-load_checkpoint = True
-ckpt_path = 'checkpoint.pth.tar'
+    # Initialize output tensor with start token
+    decoder_input = torch.LongTensor([[SOS_token for _ in range(batch_size)]])
 
+    for i in range(MAX_LENGTH):
+        with torch.no_grad():
+            predictions = model(sentence_tensor)
 
-def evaluate(transformer, question, question_mask, max_len, word_map):
-    """
-    Performs Greedy Decoding with a batch size of 1
-    """
-    rev_word_map = {v: k for k, v in word_map.items()}
-    transformer.eval()
-    start_token = word_map['<start>']
-    encoded = transformer.encode(question, question_mask)
-    words = torch.LongTensor([[start_token]]).to(device)
-    
-    for step in range(max_len - 1):
-        size = words.shape[1]
-        target_mask = torch.triu(torch.ones(size, size)).transpose(0, 1).type(dtype=torch.uint8)
-        target_mask = target_mask.to(device).unsqueeze(0).unsqueeze(0)
-        decoded = transformer.decode(words, target_mask, encoded, question_mask)
-        predictions = transformer.logit(decoded[:, -1])
-        _, next_word = torch.max(predictions, dim = 1)
-        next_word = next_word.item()
-        if next_word == word_map['<end>']:
+        # Select the last word from the seq_len dimension
+        predictions = predictions[:, -1:, :]
+        predicted_id = torch.argmax(predictions, axis=-1)
+
+        # Return the result if the predicted_id is equal to the end token
+        if predicted_id.item() == EOS_token:
             break
-        words = torch.cat([words, torch.LongTensor([[next_word]]).to(device)], dim = 1)   # (1,step+2)
-        
-    # Construct Sentence
-    if words.dim() == 2:
-        words = words.squeeze(0)
-        words = words.tolist()
-        
-    sen_idx = [w for w in words if w not in {word_map['<start>']}]
-    sentence = ' '.join([rev_word_map[sen_idx[k]] for k in range(len(sen_idx))])
-    
-    return sentence
+
+        # Concatenate the predicted_id to the output
+        output = torch.cat([decoder_input, predicted_id], axis=-1)
+
+    return output.squeeze(0)
 
 
-if load_checkpoint:
-    checkpoint = torch.load(ckpt_path)
-    transformer = checkpoint['transformer']
+def predict(input_sentence, model, libra, embedding_size):
+    prediction = evaluate(input_sentence, model, libra, embedding_size)
+    predicted_sentence = [libra.index2word[index.item()] for index in prediction if index.item() < libra.num_words]
+    return predicted_sentence
 
 
-while(1):
-    question = input("Question: ") 
-    if question == 'quit':
-        break
-    max_len = input("Maximum Reply Length: ")
-    enc_qus = [word_map.get(word, word_map['<unk>']) for word in question.split()]
-    question = torch.LongTensor(enc_qus).to(device).unsqueeze(0)
-    question_mask = (question!=0).to(device).unsqueeze(1).unsqueeze(1)  
-    sentence = evaluate(transformer, question, question_mask, int(max_len), word_map)
-    print(sentence)
-
+def evaluateInput(model, libra, embedding_size):
+    input_sentence = ''
+    while(1):
+        try:
+            input_sentence = input('User > ')
+            if input_sentence == 'q' or input_sentence == 'quit': break
+            input_sentence = normalizeString(input_sentence)
+            output_words = predict(input_sentence, model, libra, embedding_size)
+            print('Cleopatra:', ' '.join(output_words))
+        except KeyError:
+            print("Error: Encountered unknown word.")
