@@ -1,75 +1,85 @@
-import json
-import torch
-from torch.utils.data import Dataset
-import torch.utils.data
-from models import *
-from utils import *
+def train(input_variable, target_variable, vocab_size, model, clip, max_length=MAX_LENGTH):
+
+    model.encoder_optimizer.zero_grad()
+    model.decoder_optimizer.zero_grad()
+
+    t_loss = 0
+    t_accuracy = 0
+    n_totals = 0
+
+    for t in range(max_length):
+        decoder_output = model(input_variable)
+        loss = F.cross_entropy(decoder_output.view(-1, vocab_size), target_variable.reshape(-1), ignore_index=0)
+        mask = (target_variable != 0).float()
+        loss = (loss * mask).mean()
+        accuracy_v = accuracy(target_variable, decoder_output)
+        t_loss += loss
+        t_accuracy += accuracy_v.item()
+        n_totals += 1
+
+    loss.backward()
+
+    model.encoder_optimizer.step()
+    model.decoder_optimizer.step()
+
+    model.encoder_scheduler.step()
+    model.decoder_scheduler.step()
+
+    _ = nn.utils.clip_grad_norm_(model.encoder.parameters(), clip)
+    _ = nn.utils.clip_grad_norm_(model.decoder.parameters(), clip)
+
+    return t_loss / n_totals, t_accuracy / n_totals
 
 
-train_loader = torch.utils.data.DataLoader(Dataset(),
-                                           batch_size = 100, 
-                                           shuffle=True, 
-                                           pin_memory=True)
 
-d_model = 512
-heads = 8
-num_layers = 6
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-epochs = 10
+def trainIters(model_name, libra, pairs, save_dir, n_iteration, batch_size,
+               print_every, save_every, clip, loadFilename, vocab_size, model):
 
-with open('WORDMAP_corpus.json', 'r') as j:
-    word_map = json.load(j)
-    
-transformer = Transformer(d_model = d_model, heads = heads, num_layers = num_layers, word_map = word_map)
-transformer = transformer.to(device)
-adam_optimizer = torch.optim.Adam(transformer.parameters(), lr=0, betas=(0.9, 0.98), eps=1e-9)
-transformer_optimizer = AdamWarmup(model_size = d_model, warmup_steps = 4000, optimizer = adam_optimizer)
-criterion = LossWithLS(len(word_map), 0.1)
+    print("Creating the training batches...")
+    training_pairs = [batch2TrainData(libra, [random.choice(pairs) for _ in range(batch_size)])
+                      for _ in range(n_iteration)]
+
+    start_iteration = 1
+    print_loss = 0
+    print_count = 0
+    old = 0
+    tries = 0
+
+    if loadFilename:
+        tries = model.checkpoint['time']
+
+    print("Initializing Training...")
+    print()
+    for iteration in range(start_iteration, n_iteration + 1):
+        training_pair = training_pairs[iteration - 1]
+
+        input_variable, target_variable = training_pair
+
+        input_variable = input_variable.to(device)
+        target_variable = target_variable.to(device)
+
+        input_variable = model.embedding(input_variable).to(device)
+
+        loss, accuracy = train(input_variable, target_variable, vocab_size, model, clip)
+
+        if iteration % print_every == 0:
+            print("Iteration: {}; Percent complete: {:.1f}%; Average loss: {:.4f}; Average accuracy: {:.4f}".format(iteration, iteration / n_iteration * 100, loss, accuracy))
 
 
-
-def train(train_loader, transformer, criterion, epoch):
-    
-    transformer.train()
-    sum_loss = 0
-    count = 0
-
-    for i, (question, reply) in enumerate(train_loader):
-        
-        samples = question.shape[0]
-
-        # Move to device
-        question = question.to(device)
-        reply = reply.to(device)
-
-        # Prepare Target Data
-        reply_input = reply[:, :-1]
-        reply_target = reply[:, 1:]
-
-        # Create mask and add dimensions
-        question_mask, reply_input_mask, reply_target_mask = create_masks(question, reply_input, reply_target)
-
-        # Get the transformer outputs
-        out = transformer(question, question_mask, reply_input, reply_input_mask)
-
-        # Compute the loss
-        loss = criterion(out, reply_target, reply_target_mask)
-        
-        # Backprop
-        transformer_optimizer.optimizer.zero_grad()
-        loss.backward()
-        transformer_optimizer.step()
-        
-        sum_loss += loss.item() * samples
-        count += samples
-        
-        if i % 100 == 0:
-            print("Epoch [{}][{}/{}]\tLoss: {:.3f}".format(epoch, i, len(train_loader), sum_loss/count))
-            
-            
-for epoch in range(epochs):
-    
-    train(train_loader, transformer, criterion, epoch)
-    
-    state = {'epoch': epoch, 'transformer': transformer, 'transformer_optimizer': transformer_optimizer}
-    torch.save(state, 'checkpoint_' + str(epoch) + '.pth.tar')
+        if (iteration % save_every == 0):
+                    tries += save_every
+                    directory = os.path.join(save_dir, model_name, '{}-{}_{}'.format(model.embedding_size, model.num_heads, model.vocab_size))
+                    if not os.path.exists(directory):
+                        os.makedirs(directory)
+                    torch.save({
+                        'iteration': iteration,
+                        'time': tries,
+                        'mo':model,
+                        'en': model.encoder.state_dict(),
+                        'de': model.decoder.state_dict(),
+                        'en_opt': model.encoder_optimizer.state_dict(),
+                        'de_opt': model.decoder_optimizer.state_dict(),
+                        'loss': loss,
+                        'voc_dict': libra.__dict__,
+                        'embedding': model.embedding.state_dict()
+                    }, os.path.join(directory, '{}_{}.tar'.format(iteration, 'checkpoint')))
