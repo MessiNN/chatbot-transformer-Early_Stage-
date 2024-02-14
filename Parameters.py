@@ -1,3 +1,34 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+
+from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LambdaLR
+
+
+import random
+import re
+import os
+import unicodedata
+import itertools
+import pandas as pd
+
+from torch.nn.utils.rnn import pad_sequence
+
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device_cpu = torch.device("cpu")
+
+save_dir = os.path.join("/content/drive/MyDrive", "data", "save")
+
+PAD_token = 0
+SOS_token = 1
+EOS_token = 2
+
+MAX_LENGTH = 20
+MIN_COUNT = 6
+
 model_name = 'Cleopatra_model'
 
 encoder_n_layers = 4
