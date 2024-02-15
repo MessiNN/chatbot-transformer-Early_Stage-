@@ -1,6 +1,6 @@
 # PyTorch Implementation of a Chatbot using Transformers
 
-This is an experiment on using Transformers to build a Chatbot (Question-Answer System). The code is NOT heavily commented yet and still in it's testing phase.
+This is an experiment on using Transformers to build a Chatbot (Question-Answer System). The code is NOT heavily commented yet and still in it's testing and development phase.
 
 ## Requirements 
 PyTorch 1.1.0 or higher, Python 3.6/3.7 +
